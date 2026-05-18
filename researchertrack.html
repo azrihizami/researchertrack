@@ -566,10 +566,20 @@ async function doLogin(){
   const pin=document.getElementById('loginPin').value.trim();
   if(!name||!pin){document.getElementById('loginError').textContent='Please enter name and PIN.';return;}
   document.getElementById('loginError').textContent='Signing in…';
-  await syncAll();
-  const user=DB.users.find(u=>u.name.toLowerCase()===name.toLowerCase()&&u.pin===pin);
-  if(!user){document.getElementById('loginError').textContent='Name or PIN incorrect.';return;}
-  CU=user;sessionStorage.setItem('rt_session',JSON.stringify(user));launchApp();
+  try {
+    // Only load users sheet for login — much faster
+    const users = await loadSheet('users');
+    DB.users = users || [];
+    const user=DB.users.find(u=>u.name.toLowerCase()===name.toLowerCase()&&u.pin===pin);
+    if(!user){document.getElementById('loginError').textContent='Name or PIN incorrect.';return;}
+    CU=user;
+    sessionStorage.setItem('rt_session',JSON.stringify(user));
+    // Load rest of data in background after login
+    syncAll().then(()=>{ refreshBadges(); });
+    launchApp();
+  } catch(e) {
+    document.getElementById('loginError').textContent='Could not reach server. Check connection.';
+  }
 }
 async function doRegister(){
   const name=document.getElementById('regName').value.trim();
