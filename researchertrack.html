@@ -524,19 +524,20 @@ async function saveSheet(sheet, rows){ return await api('set', {sheet, rows: JSO
 const DB = {users:[],members:[],progress:[],milestones:[],ideas:[],gatherings:[],events:[],projects:[]};
 async function syncAll(){
   setLoading(true);
-  try {
-    const keys = Object.keys(DB);
-    for(const k of keys){
-      try {
-        const result = await loadSheet(k);
-        DB[k] = result || [];
-      } catch(e) {
-        console.warn(`Failed to load sheet: ${k}`, e);
-        DB[k] = DB[k] || [];
-      }
+  const keys = Object.keys(DB);
+  for(const k of keys){
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(()=>controller.abort(), 10000);
+      const params = new URLSearchParams({action:'get', sheet:k});
+      const res = await fetch(`${API_URL}?${params}`, {signal: controller.signal});
+      clearTimeout(timeout);
+      const data = await res.json();
+      if(data.ok) DB[k] = data.result || [];
+    } catch(e) {
+      console.warn(`Skipped sheet: ${k}`, e.message);
+      DB[k] = DB[k] || [];
     }
-  } catch(e){ 
-    console.error('syncAll error:', e);
   }
   setLoading(false);
 }
