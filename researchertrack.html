@@ -567,17 +567,20 @@ async function doLogin(){
   if(!name||!pin){document.getElementById('loginError').textContent='Please enter name and PIN.';return;}
   document.getElementById('loginError').textContent='Signing in…';
   try {
-    // Only load users sheet for login — much faster
     const users = await loadSheet('users');
     DB.users = users || [];
-    const user=DB.users.find(u=>u.name.toLowerCase()===name.toLowerCase()&&u.pin===pin);
+    // Compare both as strings to handle Google Sheets returning numbers
+    const user=DB.users.find(u=>
+      u.name.toLowerCase()===name.toLowerCase()&&
+      String(u.pin)===String(pin)
+    );
     if(!user){document.getElementById('loginError').textContent='Name or PIN incorrect.';return;}
     CU=user;
     sessionStorage.setItem('rt_session',JSON.stringify(user));
-    // Load rest of data in background after login
     syncAll().then(()=>{ refreshBadges(); });
     launchApp();
   } catch(e) {
+    console.error('Login error:',e);
     document.getElementById('loginError').textContent='Could not reach server. Check connection.';
   }
 }
@@ -590,7 +593,6 @@ async function doRegister(){
   // Always sync first so we have latest users from Sheet
   await syncAll();
   if(DB.users.find(u=>u.name.toLowerCase()===name.toLowerCase())){
-    document.getElementById('regError').textContent='Name already exists.';return;
   }
   const nu={id:uid(),name,role,pin};
   DB.users.push(nu);
