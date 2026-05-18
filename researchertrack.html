@@ -255,6 +255,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);font-
       <button class="nav-item" onclick="showPanel('calendar')"><span class="nav-icon">📅</span> Calendar</button>
       <div class="nav-section">Lab Culture</div>
       <button class="nav-item" onclick="showPanel('gatherings')"><span class="nav-icon">💬</span> Gatherings Log</button>
+      <button class="nav-item" onclick="showPanel('grants')"><span class="nav-icon">🏦</span> Grants</button>
       <button class="nav-item" onclick="showPanel('ideas')"><span class="nav-icon">💡</span> Ideas Board <span class="nav-badge amber-badge" id="bIdeas">0</span></button>
     </div>
     <div class="sidebar-bottom">
@@ -334,6 +335,11 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);font-
       <!-- GATHERINGS -->
       <div class="section" id="panel-gatherings">
         <div id="gatheringsList"></div>
+      </div>
+
+      <!-- GRANTS -->
+      <div class="section" id="panel-grants">
+        <div id="grantsList"></div>
       </div>
 
       <!-- IDEAS -->
@@ -501,6 +507,35 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);font-
   </div>
 </div>
 
+<div class="modal-overlay" id="modalGrant">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title" id="modalGrantTitle">Add Grant</div><button class="modal-close" onclick="closeModal('modalGrant')">✕</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="grantEditId">
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Grant Code *</label><input class="form-input" type="text" id="grantCode" placeholder="e.g. RDU250102"></div>
+        <div class="form-group"><label class="form-label">Funding Agency</label><input class="form-input" type="text" id="grantAgency" placeholder="e.g. MOHE, UMPSA"></div>
+      </div>
+      <div class="form-group"><label class="form-label">Grant Title *</label><input class="form-input" type="text" id="grantTitle" placeholder="e.g. Hairpin Winding Thermo-Electric Behavior"></div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Start Date</label><input class="form-input" type="date" id="grantStart"></div>
+        <div class="form-group"><label class="form-label">End Date</label><input class="form-input" type="date" id="grantEnd"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Amount (RM)</label><input class="form-input" type="number" id="grantAmount" placeholder="e.g. 50000"></div>
+        <div class="form-group"><label class="form-label">Status</label>
+          <select class="form-select" id="grantStatus">
+            <option value="active">Active</option>
+            <option value="completed">Completed</option>
+            <option value="pending">Pending</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-outline" onclick="closeModal('modalGrant')">Cancel</button><button class="btn btn-primary" id="modalGrantSaveBtn" onclick="saveGrant()">Add Grant</button></div>
+  </div>
+</div>
+
 <script>
 // ──────────────────────────────────────────────
 // CONFIG — paste your deployed Apps Script URL here
@@ -521,7 +556,7 @@ async function loadSheet(sheet){ return await api('get', {sheet}); }
 async function saveSheet(sheet, rows){ return await api('set', {sheet, rows: JSON.stringify(rows)}); }
 
 // In-memory cache so renders are instant after first load
-const DB = {users:[],members:[],progress:[],milestones:[],ideas:[],gatherings:[],events:[],projects:[]};
+const DB = {users:[],members:[],progress:[],milestones:[],ideas:[],gatherings:[],events:[],projects:[],grants:[]};
 async function syncAll(){
   setLoading(true);
   const keys = Object.keys(DB);
@@ -555,7 +590,11 @@ function setLoading(on){
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6);}
 function isStaff(){return CU&&CU.role==='staff';}
 function myMemberId(){if(!CU)return null;const m=DB.members.find(x=>x.id===CU.id||x.name.toLowerCase()===CU.name.toLowerCase());return m?m.id:null;}
-function grantOptions(){return '<option value="">No grant / self-funded</option>';}
+function grantOptions(){
+  let html='<option value="">No grant / self-funded</option>';
+  DB.grants.forEach(g=>{html+=`<option value="${g.id}">${g.code} — ${g.title}</option>`;});
+  return html;
+}
 
 // ──────────────────────────────────────────────
 // AUTH
@@ -594,11 +633,12 @@ async function doRegister(){
   await syncAll();
   if(DB.users.find(u=>u.name.toLowerCase()===name.toLowerCase())){
   }
-  const nu={id:uid(),name,role,pin};
+  const now=new Date().toISOString();
+  const nu={id:uid(),name,role,pin,createdAt:now};
   DB.users.push(nu);
   await push('users');
   if(role!=='staff'){
-    DB.members.push({id:nu.id,name,role,topic:'',grant:'',start:today(),email:''});
+    DB.members.push({id:nu.id,name,role,topic:'',grant:'',start:today(),email:'',createdAt:now,updatedAt:now});
     await push('members');
   }
   showToast('Account created — you can now sign in.','success');
@@ -636,7 +676,7 @@ function launchApp(){
   document.getElementById('sName').textContent=CU.name;
   document.getElementById('sRole').textContent=roleLabel(CU.role);
   if(!isStaff()){
-    ['members','projects','milestones','calendar','gatherings'].forEach(id=>{
+    ['members','projects','milestones','calendar','gatherings','grants'].forEach(id=>{
       const el=document.querySelector(`.nav-item[onclick="showPanel('${id}')"]`);
       if(el) el.style.display='none';
     });
@@ -647,11 +687,12 @@ function launchApp(){
 // ──────────────────────────────────────────────
 // PANELS
 // ──────────────────────────────────────────────
-const panelTitles={dashboard:'Dashboard',members:'Lab Members',projects:'Project Mapping',progress:'Progress Log',milestones:'Milestones',calendar:'Calendar',gatherings:'Gatherings Log',ideas:'Ideas Board'};
+const panelTitles={dashboard:'Dashboard',members:'Lab Members',projects:'Project Mapping',progress:'Progress Log',milestones:'Milestones',calendar:'Calendar',gatherings:'Gatherings Log',grants:'Grants',ideas:'Ideas Board'};
 const panelActions={
   members:()=>isStaff()?`<button class="btn btn-primary btn-sm" onclick="openAddMember()">+ Add Member</button>`:'',
   progress:()=>`<button class="btn btn-primary btn-sm" onclick="openAddProgress()">+ Log Progress</button>`,
   gatherings:()=>isStaff()?`<button class="btn btn-primary btn-sm" onclick="openModal('modalGathering')">+ Log Gathering</button>`:'',
+  grants:()=>isStaff()?`<button class="btn btn-primary btn-sm" onclick="openAddGrant()">+ Add Grant</button>`:'',
   ideas:()=>`<button class="btn btn-amber btn-sm" onclick="openModal('modalIdea');populateSelects()">+ Add Idea</button>`,
   calendar:()=>isStaff()?`<button class="btn btn-primary btn-sm" onclick="openModal('modalEvent');populateSelects()">+ Add Event</button>`:'',
 };
@@ -669,6 +710,7 @@ function showPanel(id){
   if(id==='milestones') renderMilestones();
   if(id==='calendar') renderCalendar();
   if(id==='gatherings') renderGatherings();
+  if(id==='grants') renderGrants();
   if(id==='ideas') renderIdeas();
 }
 function refreshBadges(){
@@ -777,12 +819,13 @@ async function saveMember(){
   const start=document.getElementById('mStart').value;
   const email=document.getElementById('mEmail').value.trim();
   if(!name){showToast('Please enter a name.');return;}
+  const now=new Date().toISOString();
   if(editId){
     const idx=DB.members.findIndex(x=>x.id===editId);
-    if(idx>-1) DB.members[idx]={...DB.members[idx],name,role,topic,grant,start,email};
+    if(idx>-1) DB.members[idx]={...DB.members[idx],name,role,topic,grant,start,email,updatedAt:now};
     showToast(`${name} updated.`,'success');
   } else {
-    DB.members.push({id:uid(),name,role,topic,grant,start,email});
+    DB.members.push({id:uid(),name,role,topic,grant,start,email,createdAt:now,updatedAt:now});
     showToast(`${name} added.`,'success');
   }
   await push('members');
@@ -881,7 +924,7 @@ async function saveProgress(){
   const stuck=document.getElementById('pStuck').value.trim();
   const next=document.getElementById('pNext').value.trim();
   if(!ms.value||!date){showToast('Select member and date.');return;}
-  DB.progress.push({id:uid(),memberId:ms.value,memberName:ms.options[ms.selectedIndex].text,date,done,stuck,next});
+  DB.progress.push({id:uid(),memberId:ms.value,memberName:ms.options[ms.selectedIndex].text,date,done,stuck,next,createdAt:new Date().toISOString()});
   await push('progress');
   closeModal('modalProgress');
   ['pDone','pStuck','pNext'].forEach(id=>document.getElementById(id).value='');
@@ -924,7 +967,7 @@ async function saveMilestone(){
   const status=document.getElementById('msStatus').value;
   const notes=document.getElementById('msNotes').value.trim();
   if(!title||!due){showToast('Fill required fields.');return;}
-  DB.milestones.push({id:uid(),studentId:ss.value,studentName:ss.options[ss.selectedIndex]?.text||'—',title,due,status,notes});
+  DB.milestones.push({id:uid(),studentId:ss.value,studentName:ss.options[ss.selectedIndex]?.text||'—',title,due,status,notes,createdAt:new Date().toISOString()});
   await push('milestones');closeModal('modalMilestone');
   ['msTitle','msDue','msNotes'].forEach(id=>document.getElementById(id).value='');
   showToast('Milestone saved.','success');renderMilestones();
@@ -972,12 +1015,94 @@ async function saveEvent(){
   const ws=document.getElementById('evWith');
   const notes=document.getElementById('evNotes').value.trim();
   if(!title||!date){showToast('Enter title and date.');return;}
-  DB.events.push({id:uid(),title,date,time,type,withId:ws.value,withName:ws.options[ws.selectedIndex]?.text||'',notes});
+  DB.events.push({id:uid(),title,date,time,type,withId:ws.value,withName:ws.options[ws.selectedIndex]?.text||'',notes,createdAt:new Date().toISOString()});
   await push('events');closeModal('modalEvent');
   ['evTitle','evDate','evTime','evNotes'].forEach(id=>document.getElementById(id).value='');
   showToast('Event added.','success');renderCalendar();renderDashboard();
 }
 async function deleteEvent(id){DB.events=DB.events.filter(e=>e.id!==id);await push('events');renderCalendar();renderDashboard();}
+
+// ──────────────────────────────────────────────
+// GRANTS
+// ──────────────────────────────────────────────
+function renderGrants(){
+  const grants=DB.grants;
+  const c=document.getElementById('grantsList');
+  c.innerHTML=grants.length?grants.map(g=>`
+    <div class="gathering-card" style="margin-bottom:10px;">
+      <div class="gathering-header">
+        <div>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--primary);">${g.code}</span>
+          <span class="badge" style="margin-left:8px;background:${g.status==='active'?'var(--green-light)':g.status==='pending'?'var(--amber-light)':'var(--surface2)'};color:${g.status==='active'?'var(--green)':g.status==='pending'?'var(--amber)':'var(--text-muted)'};">${g.status}</span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          ${isStaff()?`<button class="btn btn-outline btn-sm" onclick='openEditGrant("${g.id}")'>✏️</button><button class="icon-btn danger" onclick='deleteGrant("${g.id}")'>✕</button>`:''}
+        </div>
+      </div>
+      <div style="font-size:13px;font-weight:500;margin-bottom:4px;">${g.title}</div>
+      <div style="font-size:11px;color:var(--text-muted);display:flex;gap:16px;flex-wrap:wrap;">
+        ${g.agency?`<span>🏛 ${g.agency}</span>`:''}
+        ${g.amount?`<span>💰 RM ${Number(g.amount).toLocaleString()}</span>`:''}
+        ${g.start?`<span>📅 ${fmtDate(g.start)} → ${g.end?fmtDate(g.end):'ongoing'}</span>`:''}
+        ${g.createdAt?`<span style="margin-left:auto;">Added ${fmtDate(g.createdAt)}</span>`:''}
+      </div>
+    </div>`).join(''):`<div class="empty">No grants added yet. Add your first grant to assign members to it.</div>`;
+}
+function openAddGrant(){
+  document.getElementById('grantEditId').value='';
+  document.getElementById('modalGrantTitle').textContent='Add Grant';
+  document.getElementById('modalGrantSaveBtn').textContent='Add Grant';
+  ['grantCode','grantAgency','grantTitle','grantStart','grantEnd','grantAmount'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('grantStatus').value='active';
+  openModal('modalGrant');
+}
+function openEditGrant(id){
+  const g=DB.grants.find(x=>x.id===id);if(!g)return;
+  document.getElementById('grantEditId').value=id;
+  document.getElementById('grantCode').value=g.code||'';
+  document.getElementById('grantAgency').value=g.agency||'';
+  document.getElementById('grantTitle').value=g.title||'';
+  document.getElementById('grantStart').value=g.start||'';
+  document.getElementById('grantEnd').value=g.end||'';
+  document.getElementById('grantAmount').value=g.amount||'';
+  document.getElementById('grantStatus').value=g.status||'active';
+  document.getElementById('modalGrantTitle').textContent='Edit Grant';
+  document.getElementById('modalGrantSaveBtn').textContent='Save Changes';
+  openModal('modalGrant');
+}
+async function saveGrant(){
+  const editId=document.getElementById('grantEditId').value;
+  const code=document.getElementById('grantCode').value.trim();
+  const title=document.getElementById('grantTitle').value.trim();
+  const agency=document.getElementById('grantAgency').value.trim();
+  const start=document.getElementById('grantStart').value;
+  const end=document.getElementById('grantEnd').value;
+  const amount=document.getElementById('grantAmount').value;
+  const status=document.getElementById('grantStatus').value;
+  if(!code||!title){showToast('Grant code and title are required.');return;}
+  const now=new Date().toISOString();
+  if(editId){
+    const idx=DB.grants.findIndex(x=>x.id===editId);
+    if(idx>-1) DB.grants[idx]={...DB.grants[idx],code,title,agency,start,end,amount,status,updatedAt:now};
+    showToast('Grant updated.','success');
+  } else {
+    DB.grants.push({id:uid(),code,title,agency,start,end,amount,status,createdAt:now,updatedAt:now});
+    showToast('Grant added.','success');
+  }
+  await push('grants');
+  closeModal('modalGrant');
+  renderGrants();
+  // Refresh grant dropdowns everywhere
+  populateGrantSelect();
+  populateSelects();
+}
+async function deleteGrant(id){
+  if(!confirm('Remove this grant?'))return;
+  DB.grants=DB.grants.filter(g=>g.id!==id);
+  await push('grants');
+  renderGrants();
+  populateGrantSelect();
+}
 
 // ──────────────────────────────────────────────
 // GATHERINGS
@@ -1005,7 +1130,7 @@ async function saveGathering(){
   const attendees=document.getElementById('gAttendees').value.trim();
   const notes=document.getElementById('gNotes').value.trim();
   if(!date){showToast('Select a date.');return;}
-  DB.gatherings.push({id:uid(),date,type,title,attendees,notes});
+  DB.gatherings.push({id:uid(),date,type,title,attendees,notes,createdAt:new Date().toISOString()});
   await push('gatherings');closeModal('modalGathering');
   ['gDate','gTitle','gAttendees','gNotes'].forEach(id=>document.getElementById(id).value='');
   showToast('Gathering logged.','success');renderGatherings();
@@ -1038,7 +1163,7 @@ async function saveIdea(){
   const rs=document.getElementById('iRaisedBy');
   const cat=document.getElementById('iCategory').value;
   if(!title){showToast('Enter an idea title.');return;}
-  DB.ideas.push({id:uid(),title,desc,raisedBy:rs.options[rs.selectedIndex]?.text||'—',category:cat,status:'open',date:today()});
+  DB.ideas.push({id:uid(),title,desc,raisedBy:rs.options[rs.selectedIndex]?.text||'—',category:cat,status:'open',date:today(),createdAt:new Date().toISOString()});
   await push('ideas');closeModal('modalIdea');
   ['iTitle','iDesc'].forEach(id=>document.getElementById(id).value='');
   showToast('Idea added!','success');refreshBadges();renderIdeas();
